@@ -17,40 +17,7 @@ This project is meant to demonstrate an Apex Trigger Framework which is built wi
 
 In order to use this trigger framework, we start with the `MetadataTriggerHandler` class which is included in this project.
 
-```java
-Trigger OpportunityTrigger on Opportunity (
-  before insert,
-  after insert,
-  before update,
-  after update,
-  before delete,
-  after delete,
-  after undelete
-) {
-  new MetadataTriggerHandler().run();
-}
-```
-
 To define a specific action, we write an individual class which implements the correct context interface.
-
-```java
-public class TA_Opportunity_StageInsertRules implements TriggerAction.BeforeInsert {
-
-  @TestVisible
-  private static final String PROSPECTING = 'Prospecting';
-  @TestVisible
-  private static final String INVALID_STAGE_INSERT_ERROR = 'The Stage must be \'Prospecting\' when an Opportunity is created';
-
-  public void beforeInsert(List<Opportunity> newList){
-    for (Opportunity opp : newList) {
-      if (opp.StageName != PROSPECTING) {
-        opp.addError(INVALID_STAGE_INSERT_ERROR);
-      }
-    }
-  }
-}
-
-```
 
 This allows us to use custom metadata to configure a few things from the setup menu:
 
@@ -70,25 +37,6 @@ Now, as future development work gets completed, we won't need to keep modifying 
 
 Note that if an Apex class is specified in metadata and it does not exist or does not implement the correct interface, a runtime error will occur.
 
-With this multiplicity of Apex classes, it would be wise to follow a naming convention such as `TA_ObjectName_Description` and utilize the `sfdx-project.json` file to partition your application into multiple directories.
-
-```javascript
-{
-  "packageDirectories": [
-    {
-      "path": "application/base",
-      "default": true
-    },
-    {
-      "path": "application/opportunity-automation",
-      "default": false
-    }
-  ],
-  "namespace": "",
-  "sfdcLoginUrl": "https://login.salesforce.com",
-  "sourceApiVersion": "50.0"
-}
-```
 
 ---
 
@@ -130,33 +78,6 @@ The Trigger Actions Framework supports standard objects, custom objects, and obj
 
 Use the `TriggerBase.idToNumberOfTimesSeenBeforeUpdate` and `TriggerBase.idToNumberOfTimesSeenAfterUpdate` to prevent recursively processing the same record(s).
 
-```java
-public class TA_Opportunity_RecalculateCategory implements TriggerAction.AfterUpdate {
-
-  public void afterUpdate(List<Opportunity> newList, List<Opportunity> oldList) {
-    Map<Id,Opportunity> oldMap = new Map<Id,Opportunity>(oldList);
-    List<Opportunity> oppsToBeUpdated = new List<Opportunity>();
-    for (Opportunity opp : newList) {
-      if (
-        TriggerBase.idToNumberOfTimesSeenAfterUpdate.get(opp.id) == 1 &&
-        opp.StageName != oldMap.get(opp.id).StageName
-      ) {
-        oppsToBeUpdated.add(opp);
-      }
-    }
-    if (!oppsToBeUpdated.isEmpty()) {
-      this.recalculateCategory(oppsToBeUpdated);
-    }
-  }
-
-  private void recalculateCategory(List<Opportunity> opportunities) {
-    //do some stuff
-    update opportunities;
-  }
-
-}
-```
-
 ---
 
 ## Bypass Mechanisms
@@ -181,29 +102,6 @@ You can bypass all actions on an sObject as well as specific Apex or Flow action
 
 To bypass from Apex, use the static `bypass(String name)` method in the `TriggerBase`, `MetadataTriggerHandler`, or `TriggerActionFlow` classes.
 
-```java
-public void updateAccountsNoTrigger(List<Account> accountsToUpdate) {
-  TriggerBase.bypass('Account');
-  update accountsToUpdate;
-  TriggerBase.clearBypass('Account');
-}
-```
-
-```java
-public void insertOpportunitiesNoRules(List<Opportunity> opportunitiesToInsert) {
-  MetadataTriggerHandler.bypass('TA_Opportunity_StageInsertRules');
-  insert opportunitiesToInsert;
-  MetadataTriggerHandler.clearBypass('TA_Opportunity_StageInsertRules');
-}
-```
-
-```java
-public void updateContactsNoFlow(List<Contacts> contactsToUpdate) {
-  TriggerActionFlow.bypass('Contact_Flow');
-  update contactsToUpdate;
-  TriggerActionFlow.clearBypass('Contact_Flow');
-}
-```
 
 #### Bypass from Flow
 
@@ -234,64 +132,9 @@ Developers can enter the API name of a permission in the `Required_Permission__c
 
 It could be the case that multiple triggered actions on the same sObject require results from a query to implement their logic. In order to avoid making duplicative queries to fetch similar data, use the singleton pattern to fetch and store query results once then use them in multiple individual action classes.
 
-```java
-public class TA_Opportunity_Queries {
-  private static TA_Opportunity_Queries instance;
-
-  private TA_Opportunity_Queries() {
-  }
-
-  public static TA_Opportunity_Queries getInstance() {
-    if (TA_Opportunity_Queries.instance == null) {
-      TA_Opportunity_Queries.instance = new TA_Opportunity_Queries();
-    }
-    return TA_Opportunity_Queries.instance;
-  }
-
-  public Map<Id, Account> beforeAccountMap { get; private set; }
-
-  public class Service implements TriggerAction.BeforeInsert {
-    public void beforeInsert(List<Opportunity> newList) {
-      TA_Opportunity_Queries.getInstance().beforeAccountMap = getAccountMapFromOpportunities(
-        newList
-      );
-    }
-
-    private Map<Id, Account> getAccountMapFromOpportunities(
-      List<Opportunity> newList
-    ) {
-      Set<Id> accountIds = new Set<Id>();
-      for (Opportunity myOpp : newList) {
-        accountIds.add(myOpp.AccountId);
-      }
-      return new Map<Id, Account>(
-        [SELECT Id, Name FROM Account WHERE Id IN :accountIds]
-      );
-    }
-  }
-}
-
-```
-
 Now configure the queries to be the first action to be executed within the given context, and the results will be available for any subsequent triggered action.
 
 ![Query Setup](images/queriesSetup.png)
-
-```java
-public class TA_Opportunity_StandardizeName implements TriggerAction.BeforeInsert {
-  public void beforeInsert(List<Opportunity> newList) {
-    Map<Id, Account> accountIdToAccount = TA_Opportunity_Queries.getInstance()
-      .beforeAccountMap;
-    for (Opportunity myOpp : newList) {
-      String accountName = accountIdToAccount.get(myOpp.AccountId)?.Name;
-      myOpp.Name = accountName != null
-        ? accountName + ' | ' + myOpp.Name
-        : myOpp.Name;
-    }
-  }
-}
-
-```
 
 ---
 
@@ -299,13 +142,6 @@ public class TA_Opportunity_StandardizeName implements TriggerAction.BeforeInser
 
 To avoid having to downcast from `Map<Id,sObject>`, we simply construct a new map out of our `newList` and `oldList` variables:
 
-```java
-public void beforeUpdate(List<Opportunity> newList, List<Opportunity> oldList) {
-  Map<Id,Opportunity> newMap = new Map<Id,Opportunity>(newList);
-  Map<Id,Opportunity> oldMap = new Map<Id,Opportunity>(oldList);
-  ...
-}
-```
 
 This will help the transition process if you are migrating an existing Salesforce application to this new trigger actions framework.
 
